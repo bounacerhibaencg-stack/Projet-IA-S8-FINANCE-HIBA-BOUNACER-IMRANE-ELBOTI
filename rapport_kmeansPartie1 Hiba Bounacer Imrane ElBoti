@@ -1,0 +1,152 @@
+# Rapport Détaillé : Algorithme de Clustering K-Means
+
+## 1. Introduction
+L'algorithme **K-Means** (ou K-moyennes) est l'un des algorithmes d'apprentissage automatique **non supervisé** les plus populaires et les plus simples. Contrairement aux algorithmes présentés dans le rapport de prédiction supervisée (comme la Régression Logistique ou les Random Forests), K-Means n'utilise pas d'étiquettes (labels `y`). Son objectif est de découvrir des structures cachées dans les données (`X`) en les regroupant en **K clusters** (groupes) distincts.
+
+---
+
+## 2. Principe de Fonctionnement
+
+L'objectif de K-Means est de diviser les données en $K$ partitions, de sorte que les éléments d'un même groupe soient aussi similaires que possible, et que les groupes soient aussi différents que possible.
+
+L'algorithme procède de manière itérative :
+1. **Initialisation :** Choisir aléatoirement (ou via `k-means++`) $K$ points dans l'espace des données pour servir de centres initiaux (centroïdes).
+2. **Assignation :** Assigner chaque point de données (observation) au centroïde le plus proche (généralement via la distance Euclidienne).
+3. **Mise à jour :** Recalculer la position de chaque centroïde en prenant la moyenne de tous les points qui lui ont été assignés.
+4. **Convergence :** Répéter les étapes 2 et 3 jusqu'à ce que les centroïdes ne bougent presque plus (ou jusqu'à atteindre un nombre maximum d'itérations).
+
+**Objectif mathématique :** Minimiser l'**inertie intra-classe** (WCSS - Within-Cluster Sum of Squares), c'est-à-dire la somme des distances au carré entre chaque point et son centroïde.
+
+---
+
+## 3. Implémentation en Python (scikit-learn)
+
+### 3.1. Préparation des données
+Puisque K-Means se base sur le calcul de distances géométriques (distance euclidienne), **il est impératif de normaliser ou standardiser les données** avant d'appliquer l'algorithme. Si une variable est en milliers et une autre en décimales, celle en milliers dominera le calcul de la distance.
+
+```python
+from sklearn.datasets import load_wine
+from sklearn.preprocessing import StandardScaler
+import numpy as np
+
+# Chargement d'un dataset (sans utiliser les cibles y pour l'entraînement)
+wine = load_wine()
+X = wine.data
+
+# Standardisation OBLIGATOIRE (moyenne=0, ecart-type=1)
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+```
+
+### 3.2. Le Modèle K-Means
+
+```python
+from sklearn.cluster import KMeans
+from sklearn.pipeline import Pipeline
+
+# L'utilisation d'un Pipeline garantit la standardisation
+kmeans_pipe = Pipeline([
+    ("scaler", StandardScaler()),
+    ("kmeans", KMeans(
+        n_clusters=3,        # Nombre K de clusters souhaité
+        init="k-means++",    # Initialisation optimisée pour converger plus vite
+        n_init=10,           # Répète l'algo 10 fois avec des seeds différents et garde le meilleur
+        max_iter=300,        # Nombre maximum d'itérations par exécution
+        random_state=42      # Reproductibilité
+    ))
+])
+
+# Entraînement et prédiction (Apprentissage non supervisé : pas de 'y')
+clusters_assignes = kmeans_pipe.fit_predict(X)
+
+# Extraire les informations utiles
+modele_km = kmeans_pipe.named_steps["kmeans"]
+print(f"Centres des clusters : \n{modele_km.cluster_centers_}")
+print(f"Inertie finale (WCSS) : {modele_km.inertia_:.2f}")
+```
+
+---
+
+## 4. Comment choisir le nombre de clusters (K) ?
+
+Dans les cas réels, on ne connaît pas toujours à l'avance la valeur optimale de $K$. On utilise des heuristiques pour la déterminer.
+
+### 4.1. La Méthode du Coude (Elbow Method)
+On entraîne le modèle pour différentes valeurs de $K$ (ex: de 1 à 10) et on trace l'inertie en fonction de $K$. L'inertie diminue toujours avec l'augmentation de $K$, mais on cherche le point d'inflexion ("le coude") où la courbe s'aplatit, signifiant que l'ajout d'un cluster n'apporte plus d'amélioration significative.
+
+```python
+import matplotlib.pyplot as plt
+
+inerties = []
+K_list = range(1, 11)
+
+for k in K_list:
+    km = KMeans(n_clusters=k, init="k-means++", n_init=10, random_state=42)
+    km.fit(X_scaled)  # Toujours utiliser les données standardisées
+    inerties.append(km.inertia_)
+
+plt.figure(figsize=(8, 5))
+plt.plot(K_list, inerties, 'bo-')
+plt.xlabel('Nombre de clusters (K)')
+plt.ylabel('Inertie')
+plt.title('Méthode du Coude')
+plt.grid(True)
+plt.show()
+```
+
+### 4.2. Le Score de Silhouette
+Le coefficient de silhouette mesure à quel point un point est similaire à son propre cluster par rapport aux autres clusters. Une valeur proche de `1` indique que l'objet est bien assorti à son propre cluster et mal assorti aux clusters voisins.
+
+```python
+from sklearn.metrics import silhouette_score
+
+for k in range(2, 6): # La silhouette nécessite au moins 2 clusters
+    km = KMeans(n_clusters=k, n_init=10, random_state=42)
+    clusters = km.fit_predict(X_scaled)
+    score = silhouette_score(X_scaled, clusters)
+    print(f"K={k} | Score de Silhouette : {score:.3f}")
+```
+*Le K optimal est souvent celui qui maximise le score de silhouette.*
+
+---
+
+## 5. Évaluation des Performances
+
+Bien que l'apprentissage soit non supervisé, si l'on dispose des vraies étiquettes de classes pour validation (la "vérité terrain"), on peut utiliser des métriques spécifiques (évaluations extrinsèques) :
+
+```python
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+
+y_true = wine.target # Vérité terrain (juste pour l'évaluation)
+
+# Adjusted Rand Index (ARI) : de -1 à 1 (1 = matching parfait)
+ari = adjusted_rand_score(y_true, clusters_assignes)
+
+# Normalized Mutual Information (NMI) : de 0 à 1 (1 = parfaite corrélation)
+nmi = normalized_mutual_info_score(y_true, clusters_assignes)
+
+print(f"ARI : {ari:.3f} | NMI : {nmi:.3f}")
+```
+
+---
+
+## 6. Avantages et Limites
+
+### ✔️ Avantages
+* **Simplicité et rapidité :** Facile à implémenter, à comprendre et très rapide (complexité linéaire algorithme $\mathcal{O}(n)$).
+* **Scalabilité :** Convient très bien aux grands ensembles de données. (Pour les jeux de données gigantesques, on utilise sa variante `MiniBatchKMeans`).
+* **Polyvalence :** S'applique à de nombreux domaines (segmentation client, compression d'images).
+
+### ❌ Inconvénients / Limites
+* **Choix manuel du $K$ :** Il faut spécifier $K$ à l'avance ou le chercher via heuristique.
+* **Sensibilité aux valeurs extrêmes (Outliers) :** Les centroïdes sont des moyennes, donc fortement influencés par les points aberrants (le *K-Medoids* est une alternative plus robuste).
+* **Sensibilité à l'initialisation :** Un mauvais `random_state` peut conduire à un minimum local (atténué par `k-means++` et le paramètre `n_init`).
+* **Forme des clusters :** K-Means suppose que les clusters sont sphériques et de taille/densité similaires. Il échoue souvent sur des structures complexes ou des clusters imbriqués (dans ces cas, utiliser *DBSCAN* ou le *Clustering Spectral*).
+
+---
+
+## 7. Cas d'Usage Typiques
+1. **Segmentation de la clientèle :** Regrouper les clients selon leurs comportements d'achat, leur âge, leurs revenus pour des campagnes ciblées.
+2. **Compression d'images :** Réduire le nombre de couleurs d'une image en regroupant les pixels similaires autour de $K$ couleurs principales (Vector Quantization).
+3. **Détection d'anomalies :** Identifier des comportements frauduleux en repérant les points très éloignés de tous les centroïdes de clusters.
+4. **Prétraitement :** Utiliser les labels de clustering comme de nouvelles composantes (features) pour un modèle de prédiction supervisée.
